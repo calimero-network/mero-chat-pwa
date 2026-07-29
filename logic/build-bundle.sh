@@ -12,13 +12,13 @@ TARGET="${CARGO_TARGET_DIR:-../../target}"
 #   1. APP_VERSION_OVERRIDE env  — explicit pin (e.g. a migration bundle)
 #   2. <latest published version> + patch bump
 #   3. FALLBACK_VERSION          — registry unreachable / package not yet published
-# Package + frontend are overridable so a fork can publish under its own identity
-# (Option B) without editing this file: e.g. PACKAGE_OVERRIDE=com.calimero.chat
-# FRONTEND_OVERRIDE=https://<fork>.vercel.app/ . Defaults keep the parent's curb.
-PACKAGE="${PACKAGE_OVERRIDE:-com.calimero.curb}"
-FRONTEND_URL="${FRONTEND_OVERRIDE:-https://mero-chat.vercel.app/}"
-PKG_SHORT="${PACKAGE##*.}"   # last dotted segment → .mpk filename prefix (curb/chat)
-FALLBACK_VERSION="${FALLBACK_VERSION:-7.0.3}"   # offline floor only; registry path is authoritative
+# This fork's app identity (Option B). It IS the com.calimero.chat app, so the
+# package and frontend URL are fixed constants — not env knobs. Only the version
+# stays dynamic (APP_VERSION_OVERRIDE, set from the git tag in CI).
+PACKAGE="com.calimero.chat"
+FRONTEND_URL="https://mero-chat-pwa.vercel.app/"   # the fork's deployed production alias
+PKG_SHORT="${PACKAGE##*.}"   # last dotted segment → .mpk filename prefix
+FALLBACK_VERSION="${FALLBACK_VERSION:-0.1.0}"   # offline floor only; registry path is authoritative
 REGISTRY_URL="${REGISTRY_URL:-https://apps.calimero.network}"
 
 resolve_app_version() {
