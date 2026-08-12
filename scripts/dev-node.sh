@@ -20,16 +20,37 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Which merod to run. Defaults to PATH, but a Homebrew merod is easily years
+# behind this repo's toolchain (cargo-mero is pinned to 0.11.0-rc.20): an old
+# binary mints a root key without newer permissions, and login then fails with
+# "Root key does not have permission: namespace". Point this at a locally built
+# merod to match:
+#   MEROD_BIN=../core/target/release/merod ./scripts/dev-node.sh
+MEROD_BIN="${MEROD_BIN:-merod}"
+
 NODE_NAME="curb-dev"
 NODE_HOME="${CURB_DEV_NODE_HOME:-$HOME/.calimero/curb-dev}"
 NODE_PORT="${CURB_DEV_PORT:-2428}"
 NODE_P2P_PORT="${CURB_DEV_P2P_PORT:-2528}"
-NODE_URL="http://localhost:${NODE_PORT}"
+# 127.0.0.1, not localhost: the node is started with `--server-host 127.0.0.1`
+# so it only ever binds IPv4 loopback. `localhost` resolves to ::1 first, and
+# curl only falls back to IPv4 when nothing answers on ::1 — so if any other
+# process holds ::1 on this port (Calimero Desktop bundles its own merod) every
+# request silently goes to the wrong node.
+NODE_URL="http://127.0.0.1:${NODE_PORT}"
+LOG_FILE="/tmp/curb-dev-node.log"
 
 ADMIN_USER="${E2E_ADMIN_USER:-admin}"
 ADMIN_PASS="${E2E_ADMIN_PASS:-calimero1234}"
 
 WASM_PATH="$REPO_ROOT/logic/res/curb.wasm"
+
+# Bundle filename is "<last dotted segment of package>-<version>.mpk", matching
+# logic/build-bundle.sh. Both read the package from [package.metadata.calimero]
+# so the two never drift.
+BUNDLE_VERSION="${APP_VERSION:-0.1.0}"
+BUNDLE_PACKAGE=$(sed -n 's/^package  *= *"\(.*\)"/\1/p' "$REPO_ROOT/logic/Cargo.toml" | tail -1)
+BUNDLE_PATH="$REPO_ROOT/logic/res/${BUNDLE_PACKAGE##*.}-${BUNDLE_VERSION}.mpk"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,13 +62,55 @@ info()   { printf '     %s\n' "$*"; }
 
 node_is_running() { curl -sf "${NODE_URL}/admin-api/health" &>/dev/null; }
 
+# Fail fast when something else already holds our ports.
+#
+# Without this a clash is silent and then baffling: if another merod (e.g. the
+# one bundled with Calimero Desktop) holds the WILDCARD *:2428, our node still
+# binds 127.0.0.1:2428 successfully, but `localhost` resolves to ::1 first —
+# where our IPv4-only socket does not answer. The result is a 60s
+# "did not become healthy" timeout on a node that is actually up and fine.
+assert_ports_free() {
+  local clash=0 holder
+  for port in "$NODE_PORT" "$NODE_P2P_PORT"; do
+    # `|| true`: lsof exits 1 when it finds nothing, which under `set -e`
+    # would abort the script precisely when the port IS free.
+    #
+    # Retry briefly: nuke_node kills the previous node moments earlier and
+    # merod does not release its swarm socket instantly, so a single check
+    # reports OUR OWN just-stopped node as a clash.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      holder=$(lsof -iTCP:"$port" -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print $1" (pid "$2")"}' || true)
+      [ -z "$holder" ] && break
+      sleep 1
+    done
+    if [ -n "$holder" ]; then
+      red "Port $port is already in use by $holder"
+      clash=1
+    fi
+  done
+  if [ "$clash" -eq 1 ]; then
+    info ""
+    info "Quit the other process (Calimero Desktop bundles its own merod), or"
+    info "run this script on different ports:"
+    info ""
+    info "  CURB_DEV_PORT=3428 CURB_DEV_P2P_PORT=3528 $0"
+    info ""
+    info "Remember to point the web app at the port you choose."
+    exit 1
+  fi
+}
+
 wait_for_node() {
   printf "  Waiting for node"
   for _ in $(seq 1 60); do
     if node_is_running; then printf '  ready\n'; return; fi
     printf '.'; sleep 1
   done
-  printf '\n'; red "Node did not become healthy after 60s"; exit 1
+  printf '\n'
+  red "Node did not become healthy after 60s"
+  info "Last lines of $LOG_FILE:"
+  tail -5 "$LOG_FILE" 2>/dev/null | sed 's/^/     /'
+  exit 1
 }
 
 pid_file() { echo "/tmp/curb-dev-node.pid"; }
@@ -101,9 +164,11 @@ fi
 
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 
-for cmd in merod jq curl cargo-mero; do
+for cmd in jq curl cargo-mero; do
   command -v "$cmd" &>/dev/null || { red "'$cmd' not found in PATH"; exit 1; }
 done
+command -v "$MEROD_BIN" &>/dev/null || [ -x "$MEROD_BIN" ] || { red "merod not found: $MEROD_BIN"; exit 1; }
+info "merod: $("$MEROD_BIN" --version 2>/dev/null | head -1)"
 
 # ── Nuke existing node (always start fresh) ──────────────────────────────────
 
@@ -117,14 +182,32 @@ step "Building WASM"
 (cd "$REPO_ROOT/logic" && cargo mero build)
 green "curb.wasm built"
 
+# ── Package into a signed .mpk bundle ────────────────────────────────────────
+#
+# `cargo mero build` emits only the raw wasm. Installing that leaves the node
+# with empty metadata, so Calimero Desktop shows no name, no icon and no "Open"
+# entry (it gates those on metadata.links.frontend). The bundle carries the
+# manifest, so install the .mpk instead.
+step "Packaging bundle"
+(cd "$REPO_ROOT/logic" && ./build-bundle.sh)
+green "bundle built"
+
 # ── Init node (idempotent) ────────────────────────────────────────────────────
 
+assert_ports_free
+
 step "Initialising node at $NODE_HOME"
-merod --node "$NODE_NAME" --home "$NODE_HOME" init \
+# merod 0.11 requires the admin account to exist before the node ever listens:
+# `--auth-mode embedded` without credentials is a hard error (0.10 provisioned a
+# default). Feed the same credentials this script authenticates with, via stdin
+# so the password never appears in argv or the process environment.
+printf '%s' "$ADMIN_PASS" | "$MEROD_BIN" --node "$NODE_NAME" --home "$NODE_HOME" init \
   --server-host 127.0.0.1 \
   --server-port "$NODE_PORT" \
   --swarm-port  "$NODE_P2P_PORT" \
-  --auth-mode embedded
+  --auth-mode embedded \
+  --admin-user "$ADMIN_USER" \
+  --admin-password-stdin
 green "Node initialised"
 
 # ── Patch CORS — allow all localhost origins for dev ─────────────────────────
@@ -145,10 +228,10 @@ fi
 # ── Start node ────────────────────────────────────────────────────────────────
 
 step "Starting node"
-merod --node "$NODE_NAME" --home "$NODE_HOME" run \
-  > "/tmp/curb-dev-node.log" 2>&1 &
+"$MEROD_BIN" --node "$NODE_NAME" --home "$NODE_HOME" run \
+  > "$LOG_FILE" 2>&1 &
 echo $! > "$(pid_file)"
-green "Node started (pid $!  logs: /tmp/curb-dev-node.log)"
+green "Node started (pid $!  logs: $LOG_FILE)"
 wait_for_node
 
 # ── Authenticate ──────────────────────────────────────────────────────────────
@@ -179,10 +262,16 @@ fi
 # ── Install app via REST ──────────────────────────────────────────────────────
 
 step "Installing curb app"
+# install-dev-application detects a bundle archive by path and takes the
+# manifest route (install_application_from_path -> install_bundle_from_path),
+# so this carries name/icon/links.frontend onto the node. No registry or HTTP
+# involved. Bundle app-id = hash(package, signer), so the id is stable across
+# metadata edits — it only moves if the signing key changes.
+[ -f "$BUNDLE_PATH" ] || { red "Bundle not found: $BUNDLE_PATH"; exit 1; }
 APP_RES=$(curl -sf -X POST "${NODE_URL}/admin-api/install-dev-application" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d "$(jq -n --arg p "$WASM_PATH" '{path: $p, metadata: [], package: null, version: null}')" \
+  -d "$(jq -n --arg p "$BUNDLE_PATH" '{path: $p, metadata: [], package: null, version: null}')" \
   2>/dev/null) || APP_RES="{}"
 APP_ID=$(echo "$APP_RES" | jq -r '.data.applicationId // empty' 2>/dev/null || true)
 
@@ -331,6 +420,19 @@ ENV_FILE="$REPO_ROOT/app/.env.integration"
 } > "$ENV_FILE"
 green "Wrote $ENV_FILE"
 
+# Point the Vite dev server at the app we just installed. The app id is a hash
+# over the wasm AND its manifest metadata, so a local build never matches the
+# id baked into src/constants/config.ts. The frontend resolves the app strictly
+# by id, so without this it reports the app as not installed and offers to
+# install it. Preserve any other keys the developer has set.
+APP_ENV_FILE="$REPO_ROOT/app/.env"
+if [ -f "$APP_ENV_FILE" ]; then
+  grep -v '^VITE_APPLICATION_ID=' "$APP_ENV_FILE" > "$APP_ENV_FILE.tmp" || true
+  mv "$APP_ENV_FILE.tmp" "$APP_ENV_FILE"
+fi
+printf 'VITE_APPLICATION_ID="%s"\n' "$APP_ID" >> "$APP_ENV_FILE"
+green "Wrote VITE_APPLICATION_ID to $APP_ENV_FILE"
+
 printf '\n'
 printf '\033[1;32m══════════════════════════════════════════\033[0m\n'
 printf '\033[1;32m  Dev node ready\033[0m\n'
@@ -343,7 +445,7 @@ printf '  App ID:     %s\n' "$APP_ID"
 if [ -n "${NAMESPACE_ID:-}" ]; then
   printf '  Workspace:  %s\n' "$NAMESPACE_ID"
 fi
-printf '  Logs:       /tmp/curb-dev-node.log\n'
+printf '  Logs:       %s\n' "$LOG_FILE"
 printf '\n'
 printf '  Next step:\n'
 printf '    \033[36mmake dev\033[0m   →  open http://localhost:5173, connect to %s\n' "$NODE_URL"

@@ -21,6 +21,19 @@ NODE_PORT="${CURB_DEV_PORT2:-2429}"
 NODE_P2P_PORT="${CURB_DEV_P2P_PORT2:-2529}"
 NODE_URL="http://localhost:${NODE_PORT}"
 
+# Same merod-version caveat as dev-node.sh: an old binary on PATH fails at
+# init (0.11 requires admin credentials) and its runtime lacks host imports the
+# SDK expects. Point MEROD_BIN at the same build node 1 uses.
+MEROD_BIN="${MEROD_BIN:-merod}"
+
+# Install the SAME artifact node 1 installs. Installing the raw wasm here gave
+# node2 a different application id (the raw-wasm id hashes metadata, the bundle
+# id hashes package+signer), and two nodes with different app ids cannot share
+# a context — cross-node testing silently fails.
+BUNDLE_VERSION="${APP_VERSION:-0.1.0}"
+BUNDLE_PACKAGE=$(sed -n 's/^package  *= *"\(.*\)"/\1/p' "$REPO_ROOT/logic/Cargo.toml" | tail -1)
+BUNDLE_PATH="$REPO_ROOT/logic/res/${BUNDLE_PACKAGE##*.}-${BUNDLE_VERSION}.mpk"
+
 ADMIN_USER="${E2E_ADMIN_USER:-admin}"
 ADMIN_PASS="${E2E_ADMIN_PASS:-calimero1234}"
 
@@ -95,7 +108,7 @@ fi
 
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 
-for cmd in merod jq curl; do
+for cmd in jq curl; do
   command -v "$cmd" &>/dev/null || { red "'$cmd' not found in PATH"; exit 1; }
 done
 
@@ -113,11 +126,13 @@ green "curb.wasm found"
 # ── Init node2 ────────────────────────────────────────────────────────────────
 
 step "Initialising node2 at $NODE_HOME"
-merod --node "$NODE_NAME" --home "$NODE_HOME" init \
+printf '%s' "$ADMIN_PASS" | "$MEROD_BIN" --node "$NODE_NAME" --home "$NODE_HOME" init \
   --server-host 127.0.0.1 \
   --server-port "$NODE_PORT" \
   --swarm-port  "$NODE_P2P_PORT" \
-  --auth-mode embedded
+  --auth-mode embedded \
+  --admin-user "$ADMIN_USER" \
+  --admin-password-stdin
 green "Node2 initialised"
 
 # ── Bootstrap directly to node1 ───────────────────────────────────────────────
@@ -166,7 +181,7 @@ fi
 # ── Start node2 ───────────────────────────────────────────────────────────────
 
 step "Starting node2"
-merod --node "$NODE_NAME" --home "$NODE_HOME" run \
+"$MEROD_BIN" --node "$NODE_NAME" --home "$NODE_HOME" run \
   > "/tmp/curb-dev-node2.log" 2>&1 &
 echo $! > "$(pid_file)"
 green "Node2 started (pid $!  logs: /tmp/curb-dev-node2.log)"
@@ -203,7 +218,7 @@ step "Installing curb app on node2"
 APP_RES=$(curl -sf -X POST "${NODE_URL}/admin-api/install-dev-application" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d "$(jq -n --arg p "$WASM_PATH" '{path: $p, metadata: [], package: null, version: null}')" \
+  -d "$(jq -n --arg p "$BUNDLE_PATH" '{path: $p, metadata: [], package: null, version: null}')" \
   2>/dev/null) || APP_RES="{}"
 APP_ID=$(echo "$APP_RES" | jq -r '.data.applicationId // empty' 2>/dev/null || true)
 
