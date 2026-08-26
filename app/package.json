@@ -2,6 +2,7 @@
   "name": "calimero-chat",
   "private": true,
   "version": "0.0.1",
+  "packageManager": "pnpm@9.15.9",
   "description": "Calimero Chat frontend application built with React",
   "keywords": [
     "calimero",
