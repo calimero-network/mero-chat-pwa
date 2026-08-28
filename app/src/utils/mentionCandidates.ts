@@ -13,16 +13,32 @@ import { isSelfSender } from "./selfIdentity";
  * while the app holds device keys and several encodings of both, so a direct
  * comparison silently matches nothing and quietly leaves you in the list.
  */
+/**
+ * The two reserved words that address the whole channel.
+ *
+ * They already worked — the contract's `get_unread_mentions` counts a message
+ * carrying either as mentioning everybody — but nothing ever offered them, so
+ * you had to know they existed and type them exactly. Listing them is the whole
+ * difference between a feature that exists and one anybody uses.
+ *
+ * First in the list, at a fixed position: they do not belong to the roster, and
+ * interleaving them alphabetically would move them every time membership
+ * changed.
+ */
+const BROADCASTS = ["everyone", "here"];
+
 export function mentionCandidates(
   members: Map<string, string> | undefined | null,
   contextId: string,
 ): string[] {
-  if (!members) return [];
+  const names: string[] = [...BROADCASTS];
+  if (!members) return names;
 
-  const names: string[] = [];
   for (const [identity, name] of members) {
     if (!name.trim()) continue;
     if (isSelfSender(identity, contextId)) continue;
+    // A member named "here" would otherwise appear twice.
+    if (BROADCASTS.includes(name.trim().toLowerCase())) continue;
     names.push(name);
   }
   return names;
