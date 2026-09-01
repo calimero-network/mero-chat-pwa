@@ -15,9 +15,6 @@ importers:
       '@braintree/sanitize-url':
         specifier: ^7.1.2
         version: 7.1.2
-      '@calimero-network/mero-js':
-        specifier: ^15.0.0
-        version: 15.3.4
       '@calimero-network/mero-platform':
         specifier: ^0.1.0
         version: 0.1.0
