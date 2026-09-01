@@ -5,6 +5,7 @@ import {
   getSelfAccountHex,
   loadSelfAccountIdentity,
 } from "../../utils/accountIdentity";
+import type { MetadataRecord } from "@calimero-network/mero-react";
 import type { ApiResponse } from "../types";
 import { getApplicationId } from "../../constants/config";
 import { groupNameError } from "../../utils/groupName";
@@ -918,6 +919,22 @@ export class GroupApiDataSource implements GroupApi {
       return ok(undefined as void);
     } catch (error) {
       return catchError("setMemberMetadata", error);
+    }
+  }
+
+  /**
+   * The group's replicated metadata record, or `null` if none was ever set.
+   *
+   * This is where a workspace name belongs: `GroupMetadataSet` replicates, so
+   * every member sees the same name and a new device sees it too — unlike the
+   * `localStorage` alias, which is one browser's label.
+   */
+  async getGroupMetadata(groupId: string): ApiResponse<MetadataRecord | null> {
+    try {
+      const record = await getMeroJs().admin.getGroupMetadata(groupId);
+      return ok(record ?? null);
+    } catch (error) {
+      return catchError("getGroupMetadata", error);
     }
   }
 
