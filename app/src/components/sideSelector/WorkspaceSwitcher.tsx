@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import styled from "styled-components";
 import { GroupApiDataSource } from "../../api/dataSource/groupApiDataSource";
+import { useWorkspaceName } from "../../hooks/useWorkspaceName";
 import {
   resolveWorkspaceName,
   shouldBackfillWorkspaceName,
@@ -172,8 +173,20 @@ export default function WorkspaceSwitcher({ isCollapsed }: WorkspaceSwitcherProp
   }, []);
 
   const current = workspaces.find((w) => w.groupId === currentGroupId);
-  const displayName =
-    current?.alias || (currentGroupId ? currentGroupId.slice(0, 8) + "…" : "Workspace");
+
+  // The pill's own name comes from the shared hook when the listing cannot
+  // supply it.
+  //
+  // The listing can be empty — a node that cannot resolve the application id
+  // returns nothing — and keying the displayed name off `find(...)` is what
+  // showed a truncated id here while Settings showed the name. The hook needs
+  // only the current group id, which is always known.
+  const currentName = useWorkspaceName(currentGroupId);
+  // The listing's entry already ranks metadata above the server alias above the
+  // local one, so prefer it when the workspace is in the list. The hook is the
+  // fallback for when it is NOT — an empty listing is exactly the case that
+  // showed a truncated id here while Settings showed the name.
+  const displayName = current?.alias || (currentGroupId ? currentName : "Workspace");
 
   const handleSelect = useCallback((groupId: string) => {
     if (groupId === currentGroupId) { setIsOpen(false); return; }
