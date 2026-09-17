@@ -65,16 +65,18 @@ jobs:
       # floor, and it tracks core master — so an unpinned install silently picks
       # up whatever landed today.
       #
-      # That is not hypothetical here. Leaving it unpinned resolved to 0.6.33,
-      # which expects rc.25's renamed `namespaceId`, against the rc.24 node these
-      # scenarios start:
+      # The two are a PAIR, and the rule is: take the client-py that was newest
+      # when THAT merobox was built. 0.6.75 is the first merobox to declare
+      # `calimero-client-py>=0.7.0`, so 0.7.0 is its partner. Getting this wrong
+      # is not a version warning — 0.7.0 dropped the `metadata` kwarg the older
+      # merobox passes, and the run dies at `install_application`.
       #
-      #     Join namespace failed: Client error: missing field `namespaceId`
-      #
-      # 0.6.29 is the version the rest of the fleet ran green against rc.24
-      # nodes. Moving the node to rc.25 means moving BOTH pins and migrating the
-      # scenario schema (see logic/Cargo.toml's min-runtime-version note).
-        run: pip install merobox==0.6.66 calimero-client-py==0.6.33 && merobox --version
+      # Both had to move for rc.38. 0.7.0 is the release that repinned onto
+      # rc.31 and installs by coordinates — the same core#3652 change that took
+      # raw wasm out of the protocol — and it carries the fix that stopped the
+      # client dropping `admitters` from an invitation on re-encode, which an
+      # rc.29+ node needs non-empty or it refuses the join.
+        run: pip install merobox==0.6.75 calimero-client-py==0.7.0 && merobox --version
 
       - name: Run E2E workflow (3-node)
         working-directory: workflows
