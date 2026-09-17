@@ -90,11 +90,23 @@ jobs:
           attempt=1
           success=false
           while [ $attempt -le $max_attempts ]; do
-            if [ $attempt -gt 1 ]; then
-              merobox stop --all || true
-              merobox nuke --force || true
-              sleep 2
-            fi
+            # ⚠️ `rm -rf data` is not tidiness — `merobox nuke` removes the
+            # CONTAINERS and leaves workflows/data/ on disk, so the next
+            # scenario boots node-1 on top of the last one's rocksdb. Since
+            # rc.38 that is fatal rather than merely dirty: the account
+            # namespace (core#3889/#3890) is node state now, and a node that
+            # comes up over another run's copy of it cannot mint its own
+            # credential —
+            #
+            #     failed to mint this node's account credential:
+            #     join credential: could not resolve this node's account root
+            #
+            # which surfaces as a 500 at `create_namespace`, in the SECOND
+            # scenario only, with the first one fully green above it.
+            merobox stop --all || true
+            merobox nuke --force || true
+            rm -rf data
+            if [ $attempt -gt 1 ]; then sleep 2; fi
             # See integration-ci.yml for why --e2e-mode is required here.
             if merobox bootstrap run e2e.yml --e2e-mode; then
               success=true
@@ -104,6 +116,7 @@ jobs:
           done
           merobox stop --all || true
           merobox nuke --force || true
+          rm -rf data
           [ "$success" = true ] || exit 1
 
       - name: Run integration-setup workflow (2-node)
@@ -113,11 +126,23 @@ jobs:
           attempt=1
           success=false
           while [ $attempt -le $max_attempts ]; do
-            if [ $attempt -gt 1 ]; then
-              merobox stop --all || true
-              merobox nuke --force || true
-              sleep 2
-            fi
+            # ⚠️ `rm -rf data` is not tidiness — `merobox nuke` removes the
+            # CONTAINERS and leaves workflows/data/ on disk, so the next
+            # scenario boots node-1 on top of the last one's rocksdb. Since
+            # rc.38 that is fatal rather than merely dirty: the account
+            # namespace (core#3889/#3890) is node state now, and a node that
+            # comes up over another run's copy of it cannot mint its own
+            # credential —
+            #
+            #     failed to mint this node's account credential:
+            #     join credential: could not resolve this node's account root
+            #
+            # which surfaces as a 500 at `create_namespace`, in the SECOND
+            # scenario only, with the first one fully green above it.
+            merobox stop --all || true
+            merobox nuke --force || true
+            rm -rf data
+            if [ $attempt -gt 1 ]; then sleep 2; fi
             if merobox bootstrap run integration-setup.yml --e2e-mode; then
               success=true
               break
@@ -126,4 +151,5 @@ jobs:
           done
           merobox stop --all || true
           merobox nuke --force || true
+          rm -rf data
           [ "$success" = true ] || exit 1
