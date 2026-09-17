@@ -36,7 +36,7 @@ steps:
   - name: Install Application on Node 1
     type: install_application
     node: msg-node-1
-    path: "../logic/res/curb.wasm"
+    path: "../logic/dist/curb-dev.mpk"
     dev: true
     outputs:
       app_id: applicationId
@@ -44,7 +44,7 @@ steps:
   - name: Install Application on Node 2
     type: install_application
     node: msg-node-2
-    path: "../logic/res/curb.wasm"
+    path: "../logic/dist/curb-dev.mpk"
     dev: true
 
   - name: Create Namespace

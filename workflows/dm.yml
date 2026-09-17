@@ -33,7 +33,7 @@ steps:
   - name: Install application on Node 1
     type: install_application
     node: calimero-node-1
-    path: "../logic/res/curb.wasm"
+    path: "../logic/dist/curb-dev.mpk"
     dev: true
     outputs:
       app_id: applicationId
@@ -41,7 +41,7 @@ steps:
   - name: Install application on Node 2
     type: install_application
     node: calimero-node-2
-    path: "../logic/res/curb.wasm"
+    path: "../logic/dist/curb-dev.mpk"
     dev: true
 
   - name: Create namespace

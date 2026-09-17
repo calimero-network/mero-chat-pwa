@@ -55,9 +55,14 @@ jobs:
 
       # Builds res/curb.wasm (ABI embedded, wasm-opt'd) AND the .mpk, so the
       # nodes below run the same artifact a release publishes.
+      #
+      # ⚠️ `--output` is load-bearing. The default name embeds the package
+      # version (dist/com.calimero.chat-3.1.1.mpk), so a release bump would
+      # silently orphan every `path:` in workflows/ — and the scenarios would
+      # fail at install, four minutes in, naming a file nothing wrote.
       - name: Build curb WASM and bundle
         working-directory: logic
-        run: cargo mero bundle --dev
+        run: cargo mero bundle --dev --output dist/curb-dev.mpk
 
       - name: Install merobox
       # ⚠️ calimero-client-py MUST be pinned, not just merobox. It is the layer
