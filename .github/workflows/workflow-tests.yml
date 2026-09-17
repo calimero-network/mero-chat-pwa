@@ -105,7 +105,12 @@ jobs:
             # scenario only, with the first one fully green above it.
             merobox stop --all || true
             merobox nuke --force || true
-            rm -rf data
+            # sudo: the node writes its blobs from inside the container as
+            # root, so a plain `rm -rf` here fails with Permission denied and
+            # leaves exactly the directory this is here to remove. (`merobox
+            # nuke` hits the same wall and reports "No data directories were
+            # deleted" without failing.)
+            sudo rm -rf data
             if [ $attempt -gt 1 ]; then sleep 2; fi
             # See integration-ci.yml for why --e2e-mode is required here.
             if merobox bootstrap run e2e.yml --e2e-mode; then
@@ -116,7 +121,7 @@ jobs:
           done
           merobox stop --all || true
           merobox nuke --force || true
-          rm -rf data
+          sudo rm -rf data || true
           [ "$success" = true ] || exit 1
 
       - name: Run integration-setup workflow (2-node)
@@ -141,7 +146,12 @@ jobs:
             # scenario only, with the first one fully green above it.
             merobox stop --all || true
             merobox nuke --force || true
-            rm -rf data
+            # sudo: the node writes its blobs from inside the container as
+            # root, so a plain `rm -rf` here fails with Permission denied and
+            # leaves exactly the directory this is here to remove. (`merobox
+            # nuke` hits the same wall and reports "No data directories were
+            # deleted" without failing.)
+            sudo rm -rf data
             if [ $attempt -gt 1 ]; then sleep 2; fi
             if merobox bootstrap run integration-setup.yml --e2e-mode; then
               success=true
@@ -151,5 +161,5 @@ jobs:
           done
           merobox stop --all || true
           merobox nuke --force || true
-          rm -rf data
+          sudo rm -rf data || true
           [ "$success" = true ] || exit 1
